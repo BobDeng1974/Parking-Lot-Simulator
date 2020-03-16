@@ -36,6 +36,7 @@ function canLeave = leave(target)
     global tryingToMove
     tryingToMove=[];        %the obstructing cars we are trying to move 
     
+    dontMoveNextHere="";      %directions we shouldn't move the blocking car in(because it has tried unsuccessfully to move there before)
     while hasMoved~=2  %while it hasn't moved out of the parking lot
         if isempty(directions)
             canLeave=false;
@@ -47,13 +48,16 @@ function canLeave = leave(target)
         showLot(NaN, carInDir(target, dir))
         hasMoved = moveInDir(target, dir, true);
         if hasMoved == 0
-            nextMoved=moveNext(target, dir, target, tryingToMove);
+            [nextMoved, triedDirections]=moveNext(target, dir, target, tryingToMove, dontMoveNextHere);
             if ~nextMoved   %if the one blocking you can't move, move in the next best direction(opposite direction since no turning)
                 directions=directions(directions~=dir);
+                dontMoveNextHere=triedDirections;
                 tryingToMove=[];
                 if ~isempty(directions)
                     dir = bestDirection(target, directions); %gives the next best direction
                 end  
+            else
+                triedDirections="";
             end
         elseif hasMoved == 2        %if its moved out of the lot(incompletely. end of car)
             indices = parkingLot==target;
@@ -69,62 +73,86 @@ function canLeave = leave(target)
 end
 
 
-function nextMoved = moveNext(carID, dir, target, tringToMove)   %target is the car we are trying to get out of the lot.
-    carID = carInDir(carID, dir);   
+function [nextMoved, triedDirections] = moveNext(carID, dir, target, tringToMove, dontMoveHere)   %target is the car we are trying to get out of the lot.
+    carID = carInDir(carID, dir);
+    if nargin<5
+       dontMoveHere="";
+    end
+    triedDirections=dontMoveHere;   %directions we've tried moving the car in(initially set it to directions we're told not to move in during function call)
+    
     if isnan(carID)     %if no car in its direction to move
        nextMoved=false ;
        return
     end
+    
     
     global tryingToMove     %only global because of the showLot function.
     tryingToMove=[tryingToMove, carID];
     showLot(tryingToMove)
     
     directions=possibleDirections(carID);   %by possible, i don't mean that there is a space. i mean that if no turning, a horizontal car can't move north, so north is not a possible direction.
+    for i=dontMoveHere
+        directions=directions(directions~=i);    %directions we were told not to move in when called.
+    end
+    
+    
     dir = bestDirection(carID, directions);
+    showLot(tryingToMove, carInDir(carID, dir))
     while ~isempty(directions)
-        showLot(tryingToMove, carInDir(carID, dir))
         if ~any(ismember([target, tryingToMove], carInDir(carID, dir)))  %if the car blocking me(the car in my direction) is *not* one of the cars we don't to move i.e target car and cars in chain of cars we want to move
             count=0;
             nextCarSize=carLength(carID);
-            while count<nextCarSize
+            dontMoveNextHere=""; %directions for the blocking car not to move in
+            maxCount=2*nextCarSize;
+            while count<maxCount
                 hasMoved = moveInDir(carID, dir);
                 if hasMoved==0      %if we can't move the car in the direction, move the car blocking it
-                    nextMoved = moveNext(carID, dir, target, tringToMove);
+                    [nextMoved, nextTriedDirs] = moveNext(carID, dir, target, tringToMove, dontMoveNextHere);
                     if nextMoved
                     	 count=count+1;
+                         dontMoveNextHere=nextTriedDirs;
                          hasMoved = moveInDir(carID, dir);
                          if hasMoved
                              tryingToMove=tryingToMove(tryingToMove~=carID);
+                             showLot(tryingToMove)
                              nextMoved=true;
                              return
-                         elseif count==nextCarSize  %if it hasn't moved and the car blocking it has moved n times(i.e if count==carSize) where n is the size of the car blocking it.(to allow blocking car to move *completely* out of the way)
+                         elseif count==maxCount  %if it hasn't moved and the car blocking it has moved n times(i.e if count==carSize) where n is the size of the car blocking it.(to allow blocking car to move *completely* out of the way)
+                            triedDirections=[triedDirections, dir];
                             directions=directions(directions~=dir);
                             if ~isempty(directions)
                                 dir = bestDirection(carID, directions);
+                                showLot(tryingToMove, carInDir(carID, dir))
                             end
                          end
                     else   %if we can't move the car blocking it, try another direction
+                        triedDirections=[triedDirections, dir];
                         directions=directions(directions~=dir);
                         if ~isempty(directions)
                             dir = bestDirection(carID, directions);
+                            showLot(tryingToMove, carInDir(carID, dir))
                         end
-                        count=nextCarSize;    %if you can't move the next, no need repeating to move clearance car completely into parkingTlo completely out of the way
+                        count=2*nextCarSize;    %if you can't move the next, no need repeating to move clearance car completely into parkingTlo completely out of the way
                     end
                 elseif hasMoved>0  %if the car did move
                     tryingToMove=tryingToMove(tryingToMove~=carID);
+                    showLot(tryingToMove)
                     nextMoved=true;
                     return
                 end
             end
         else                                                        %if the car in the direction is one of the cars that we don't want to move, it is not possible to move in that direction
+            triedDirections=[triedDirections, dir];
             directions=directions(directions~=dir);
             if ~isempty(directions)
                 dir = bestDirection(carID, directions);
+                showLot(tryingToMove, carInDir(carID, dir))
             end
         end
     end
     nextMoved=false;
+    tryingToMove=tryingToMove(tryingToMove~=carID);
+    showLot(tryingToMove)
     return
 end
 
