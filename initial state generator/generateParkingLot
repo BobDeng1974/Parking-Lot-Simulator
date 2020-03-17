@@ -1,4 +1,3 @@
-generateParkingLot()
 function parkingLot = generateParkingLot()
     global carID
     carID=1;
@@ -10,6 +9,7 @@ function parkingLot = generateParkingLot()
     else
         nCols=randi([2 25]);
     end
+    global parkingLot
     parkingLot=zeros(nRows, nCols);
     
     
@@ -64,8 +64,8 @@ function bool = carFits(carSize, orient, zeroIndex)
         if bool==true
             carID=carID+1;
             showLot(parkingLot)
+            return
         end
-        return
         for i = 0:1:carSize-1
             if row+(carSize-1)>size(parkingLot,1)
                 bool=false;
@@ -103,8 +103,8 @@ function bool = carFits(carSize, orient, zeroIndex)
         if bool==true
             carID=carID+1;
             showLot(parkingLot)
+            return
         end
-        return
         for i = 0:1:carSize-1
             if col+(carSize-1)>size(parkingLot,2)
                 bool=false;
