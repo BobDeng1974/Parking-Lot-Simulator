@@ -1,0 +1,158 @@
+classdef ParkingLot
+    properties
+        Lot;
+        Clearance;
+    end
+    
+    methods
+        function obj = ParkingLot(rows, cols)
+            obj.Lot = generateParkingLot(rows,cols);
+            
+            obj.Clearance = [];
+            [nRows, nCols] = size(obj.Lot);
+            obj.Clearance = zeros(1,2*nCols+2*(nRows-2));     %This is the maximum size it could be if every clearance space is occupied.
+            obj.Clearance(1:nCols) = obj.Lot(1,:);
+            obj.Clearance(nCols+1:2*nCols) = obj.Lot(end,:);
+            obj.Clearance(2*nCols+1:2*nCols+nRows-2) = obj.Lot(2:end-1,1);
+            obj.Clearance(2*nCols+nRows-1:2*nCols+2*(nRows-2)) = obj.Lot(2:end-1,end);
+            obj.Clearance=obj.Clearance(obj.Clearance~=0);
+        end
+        function instructions = Depart(obj, carID, solutionCount)
+            allSolutions = false;
+            if nargin<3
+                allSolutions = true;
+                solutionCount = NaN; 
+            elseif solutionCount<1
+               error('ERROR: second input argument ''solutionCount'' must be greater than 1') 
+            end
+            
+            solutions = [];
+            targetCar = carID;
+            
+            %Creating graph and adding first state
+            s=[];
+            t=[];
+            Weight = [];                                                   %list of weights of all edges
+            
+            startNodeName = "0";
+            Name = startNodeName;                                                      %unique identifies for states
+            travelledDirs = "";
+            targetTravelledDirs = "";
+            NodeState = State(carID, obj.Lot, targetCar, travelledDirs, targetTravelledDirs);   %list of states of all nodes
+            NodeTable = table(Name, NodeState);                            %table of properties of nodes
+            G = digraph(s, t, Weight, NodeTable, 'omitselfloops');
+            
+            %for bredth first search (BFS)
+            visited=[];
+            nextToVisit=[];
+            
+            %adding first node to BFS queue
+            nextToVisit=[nextToVisit, Name];
+            
+            
+            while ~isempty(nextToVisit)
+                nodeName=nextToVisit(1);
+                nodeID=findnode(G,nodeName);
+                nextToVisit = nextToVisit(2:end);
+                nodeState = G.Nodes.NodeState(nodeID);
+                
+                if size(solutions, 1) == solutionCount && ~allSolutions
+                    break
+                end
+                if nodeState.isDestination()
+                    startNode = findnode(G,startNodeName);
+                    endNode = nodeID;   %sol(1) contains the name of the end node of the solution
+                    path = shortestpath(G, startNode, endNode);
+                    %to make sure i can concatenate solutions and path
+                    if size(path,2)>size(solutions,2)
+                        temp = zeros(size(solutions,1)+1,size(path,2));
+                        temp(1:size(solutions,1),1:size(solutions,2)) = solutions;
+                        temp(size(solutions,1)+1,:) = path;
+                        solutions=temp;
+                    else
+                        solutions = [solutions; path];
+                    end
+                end
+                visited(end+1,:) = nodeName;
+                
+                %add adjacent states to graph and BFS queue (nextToVisit)
+                for NodeState = nodeState.adjacent()
+                    if obj.haveVisited(G, NodeState, visited)
+                        continue
+                    end
+                    Name = string(numnodes(G));
+                    G = addnode(G, table(Name, NodeState));
+                    
+                    Weight = nodeState.calcWeight(NodeState);
+                    s=nodeID;
+                    t=findnode(G,Name);
+                    G = addedge(G, s, t, Weight);
+                    
+                    nextToVisit(end+1) = Name;
+                end
+            end
+            
+            %finding the best of all found solutions
+            weights = zeros(size(solutions,1));
+            for i = size(solutions,1)
+                path = solutions(i,:);
+                for j = 1:length(path)-1
+                    edge = findedge(G, path(j), path(j+1));
+                    edgeWeight = G.Edges.Weight(edge);
+                    weights(i) = weights(i) + edgeWeight;
+                end
+            end
+            minWeightsIndex = find(weights==min(weights));
+            bestPath = solutions(minWeightsIndex(1),:);
+            instructions = obj.getInstructions(G, bestPath);              
+            return                                                 
+        end
+        
+        function bool = haveVisited(obj, G, nodeState, visited)
+           bool = false;
+           
+           for vName = visited
+               vState = G.Nodes.NodeState(findnode(G,string(vName)));
+               nodeLot = nodeState.Lot;
+               nodeCarID = nodeState.carID;
+               vLot = vState.Lot;
+               vCarID = vState.carID;
+               if nodeCarID==vCarID && all(all(nodeLot==vLot))    %clearance is a subvector derived from the outer edges of the "Lot", so no need to verify that their clearances equal to confirm that they are the same state
+                   bool = true;
+                   return
+               end
+           end
+        end
+        
+        function instructions = getInstructions(obj, G, path)                    %converts path to direction. e.g if node 1 and 3 are connected and
+           instructions = [];                                               %the difference between their states is car 5 moving north-west, an instruction is passed "5,nw"
+           
+            for i = 1:length(path)-1
+               startState = G.Nodes.NodeState(path(i));
+               endState = G.Nodes.NodeState(path(i+1));
+               
+               if all(all(startState.Lot==endState.Lot))              %we only care about when a car moves, not when we shift focus to moving another car
+                   continue
+               end
+               difference = startState.Lot~=endState.Lot;
+               
+               [rows, cols] = find(difference==1);
+               if all(rows == rows(1))                                     %if both states' cars are horizontal
+                   if endState.Lot(rows(1), max(cols))==startState.carID || endState.Lot(rows(1), min(cols))==0     %if car moved forward. there is a difference at (row(1), max(cols)), so if at the end state, the car is present at that index, then it must have travelled forward to there. same backwards(if a space is present at the index(row(1), min(cols))).
+                       instructions(end+1) = startState.carID + ",e ";
+                   elseif endState.Lot(rows(1), min(cols))==0 || endState.Lot(rows(1), min(cols))==startState.carID
+                       instructions(end+1) = startState.carID + ",w ";
+                   end
+               elseif all(cols == cols(1))                                 %if both states' cars are vertical
+                   if endState.Lot(max(rows), cols(1))==startState.carID || endState.Lot(max(rows), cols(1))==0     %same logic as above
+                       instructions(end+1) = startState.carID + ",s ";
+                   elseif endState.Lot(min(rows), cols(1))==0 || endState.Lot(min(rows), cols(1))==startState.carID
+                       instructions(end+1) = startState.carID + ",n ";
+                   end
+               else
+                  %To-Do for implementing turning 
+               end
+            end
+        end
+    end
+end
