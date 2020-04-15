@@ -1,0 +1,211 @@
+classdef State
+   properties
+       carID;
+       Lot;
+       Clearance;
+       travelledDirs;
+       targetCar;
+       targetTravelledDirs;
+   end
+   methods
+        function obj = State(carID, Lot, targetCar, travelledDirs, targetTravelledDirs)
+            obj.carID = carID;
+            obj.Lot = Lot;
+            obj.targetCar = targetCar;
+            obj.travelledDirs = travelledDirs;
+            obj.targetTravelledDirs = targetTravelledDirs;
+            
+            [nRows, nCols] = size(obj.Lot);
+            obj.Clearance = zeros(1,2*nCols+2*(nRows-2));     %This is the maximum size it could be if every clearance space is occupied.
+            obj.Clearance(1:nCols) = obj.Lot(1,:);
+            obj.Clearance(nCols+1:2*nCols) = obj.Lot(end,:);
+            obj.Clearance(2*nCols+1:2*nCols+nRows-2) = obj.Lot(2:end-1,1);
+            obj.Clearance(2*nCols+nRows-1:2*nCols+2*(nRows-2)) = obj.Lot(2:end-1,end);
+            obj.Clearance=obj.Clearance(obj.Clearance~=0);
+        end
+        function isDest = isDestination(obj)
+            isDest = false;
+            if obj.carID == obj.targetCar     %To-Do change content of "if" block for turning when specific exit points are used.
+                if any(ismember(obj.Clearance, obj.carID))
+                   isDest = true; 
+                end
+            end
+        end
+        function weight = calcWeight(obj, endState)
+            if obj.carID ~= endState.carID                                 %if you are trying to move another car
+                weight = 5;
+            elseif length(endState.Clearance) > length(obj.Clearance)      %if you entered the clearance zone
+               weight = 10; 
+            elseif any(any(endState.Lot ~= obj.Lot))                                 %if you moved
+                if obj.carID == obj.targetCar
+                    weight = 1;
+                else
+                    weight = 2;
+                end
+            else
+               weight = 0; 
+            end
+        end
+        function adjStates = adjacent(obj)
+            adjStates = [];
+            
+            if obj.carID~=obj.targetCar              
+                if obj.carCanMove(obj.targetCar)
+                    adjStates = [adjStates, State(obj.targetCar, obj.Lot, obj.targetCar, obj.targetTravelledDirs, obj.targetTravelledDirs)]; %focus on target car
+                end
+            end
+            
+            directions=obj.possibleDirections();
+            for dir = directions
+                if obj.carID == obj.targetCar
+                    dontMoveHere = any(ismember(obj.targetTravelledDirs, dir));
+                else
+                   dontMoveHere = any(ismember(obj.travelledDirs, dir)); 
+                end
+                
+                if dontMoveHere
+                    continue
+                end
+                
+                [canMove, nextLot] = obj.moveInDir(dir);
+                if canMove
+                    if obj.carID == obj.targetCar
+                       obj.targetTravelledDirs(end+1) = dir; 
+                    else
+                       obj.travelledDirs(end+1) = dir; 
+                    end
+                   adjStates = [adjStates, State(obj.targetCar, nextLot, obj.targetCar, obj.targetTravelledDirs, obj.targetTravelledDirs)];  %To-Do focus car is originally obj.carID. would obj.targetCar be better? that way, cars which aren't the target car move only once
+                else
+                    carInDir = obj.carInDir(obj.carID, dir);
+                    %if isnan(carInDir)
+                        %add argument deadEnd to State class and find a way to pass the deadEnd integer up the parent tree to the first node to see if there is a dead end and return no path
+                        %maybe if all children (that are not the target
+                        %car) have deadEnd, then set the parent to dead end
+                        %and remove all its children from the BFS queue?
+                        %no. would not work as it would defeat the whole
+                        %purpose of changing the focus to the target car.
+                        %maybe instead of all of this, have a list for each
+                        %state telling where they have tried to visit.
+                    %elseif carInDir ~= obj.targetCar
+                    if carInDir ~= obj.targetCar && ~isnan(carInDir)
+                        adjStates = [adjStates, State(carInDir, obj.Lot, obj.targetCar, obj.oppositeDir(dir), obj.targetTravelledDirs)]; %focus on obstructing car. set the travelledDirs to obj.oppositeDir(dir) because i wouldn't want the next car trying to move the previous car that commanded it to move out of the way.
+                    end
+                end
+            end
+        end
+        
+        %----------------------operations on car---------------------------
+        function [canMove, nextLot] = moveInDir(obj, dir)
+            if obj.carInDir(obj.carID, dir)~=0        %0 means free space in the direction
+                canMove = false;
+                nextLot = obj.Lot;
+                return
+            end
+            
+            canMove = true;
+            nextLot = obj.Lot;
+            [rows, cols] = find(obj.Lot==obj.carID);
+            if obj.carOrient() == "vert"
+                if dir == "n"
+                    nextLot(rows(1)-1,cols(1))=obj.carID;
+                    nextLot(rows(end),cols(1))=0;
+                elseif dir=="s"
+                    nextLot(rows(end)+1,cols(1))=obj.carID;
+                    nextLot(rows(1),cols(1))=0;
+                end
+            else 
+                if dir=="e"
+                    nextLot(rows(1),cols(end)+1)=obj.carID;
+                    nextLot(rows(1),cols(1))=0;
+                elseif dir=="w"
+                    nextLot(rows(1),cols(1)-1)=obj.carID;
+                    nextLot(rows(1),cols(end))=0;
+                end
+            end
+        end
+        
+        function carID = carInDir(obj, carID, dir)              %To-Do modify for turning
+            [rows, cols] = find(obj.Lot==carID);
+            try
+                if obj.carOrient() == "vert"
+                    if dir=="n"
+                        carID=obj.Lot(rows(1)-1, cols(1));  
+                    elseif dir=="s"                                 
+                        carID=obj.Lot(rows(end)+1, cols(1));
+                    end
+                else
+                    if dir=="e"
+                        carID=obj.Lot(rows(1), cols(end)+1);
+                    elseif dir=="w"
+                        carID=obj.Lot(rows(1), cols(1)-1);
+                    end
+                end
+            catch e
+                if e.identifier == 'MATLAB:badsubscript'
+                    carID=NaN;
+                else
+                    rethrow(e)
+                end
+            end
+        end
+        
+        function directions = possibleDirections(obj, carID)    %To-Do modify for turning
+            if nargin<2
+               carID=obj.carID;
+            end
+            
+            if obj.carOrient(carID) == "vert"
+                directions=["n", "s"];
+            elseif obj.carOrient(carID) == "horiz"
+                directions=["e", "w"];
+            end
+            directions = directions(~ismember(directions, obj.travelledDirs));
+        end
+        
+        function bool = carCanMove(obj, carID)
+            if nargin<2
+               carID=obj.carID;
+            end
+            bool = false();
+            directions = obj.possibleDirections(carID);
+            
+            for dir = directions
+                if carID == obj.targetCar
+                   dontMoveHere =  any(ismember(obj.targetTravelledDirs, dir));
+                else
+                   dontMoveHere =  any(ismember(obj.travelledDirs, dir));
+                end
+                if obj.carInDir(carID, dir)==0 && ~dontMoveHere
+                    bool=true;
+                    return
+                end
+            end
+            
+        end
+        
+        function orient = carOrient(obj, carID)
+            if nargin<2
+               carID=obj.carID;
+            end
+            
+            [rows, cols] = find(obj.Lot==carID);
+            if all(rows==rows(1))
+                orient = "horiz";
+            elseif all(cols==cols(1))
+                orient = "vert";
+            end
+        end
+        
+        function oppDir = oppositeDir(obj, dir)     %To-Do modify for turning
+            if dir == "n"
+                oppDir = "s";
+            elseif dir == "s"
+                oppDir = "e";
+            elseif dir == "e"
+                oppDir = "w";
+            elseif dir == "w"
+                oppDir = "e";
+            end
+        end
+   end
+end
