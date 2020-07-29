@@ -1,0 +1,9 @@
+problem state #1
+		 initial state:[0     0     0     0     0     0     0;
+                         	0     8     8     1     4     0     0;
+	                        0    10    10     1     4     6     0;
+                         	0    11     2     2     9     6     0;
+                         	0    11     7     7     9    12     0;
+                         	0     5     5     3     3    12     0;
+                         	0     0     0     0     0     0     0];
+		  check solution #3. the first move is not necessary.

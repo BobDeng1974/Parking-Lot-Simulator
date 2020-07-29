@@ -1,0 +1,125 @@
+function lot = InsertAllCars(lot,departTimes)
+    global States State2Node Graph BestCost CarList OrderedCarList
+    lotsize = length(lot);
+    if lotsize==2
+        startLot = zeros(lot(1)+2,lot(2)+2);
+    else
+        startLot = lot;
+    end
+    
+    if length(departTimes)>(size(startLot,1)*size(startLot,2))/2
+        error('number of cars above maximum capacity for lot size')
+    end
+    
+    States = containers.Map('KeyType','double','ValueType','any');
+    State2Node = containers.Map('KeyType','char','ValueType','any');
+    States(1) = startLot;
+    State2Node(mat2str(startLot)) = 1;
+    Graph = digraph();
+    CarList = 1:length(departTimes);
+    [~,idx] = sort(departTimes);
+    OrderedCarList = OrderedCarList(idx);
+    
+    BestCost = inf;
+    node = 1;
+    carIdx = 1;
+    lot = insertRecursive(node,carIdx);
+end
+
+function bestEndLot = insertRecursive(node,carIdx)
+    global Graph States State2Node CarList OrderedCarList BestCost
+    adjStates = adjacentStates(States(node),CarList(carIdx));
+    if isempty(adjStates)
+       return 
+    end
+    
+    for i = 1:size(adjStates,3)
+       adjLot = adjStates(:,:,i) ;
+       ShowLot(adjLot,CarList(carIdx))
+       if haveVisited(adjLot)
+          return 
+       end
+       
+       %add adjacent node connection
+       newNodeIdx = numnodes(Graph)+1;
+       cost = departureTime(adjLot,OrderedCarList);
+       if isnan(cost) %if the car cannot depart
+           return
+       end
+       
+       States(newNodeIdx) = adjLot;
+       State2Node(mat2str(newNodeIdx)) = newNodeIdx;
+       Graph = addedge(Graph,node, newNodeIdx,cost);
+       if carIdx+1 <= length(cars)
+           insertRecursive(newNodeIdx,carIdx+1)
+       elseif cost < BestCost%this means you've inserted all cars
+           BestCost = cost;
+           bestEndLot = adjLot;
+       end
+    end
+end
+
+function adjStates = adjacentStates(Lot,car)
+    adjStates = [];
+    startQueue = [];
+    for i = 2:
+    exploreQueue = [];
+    Explored = containers.Map('KeyType','char','ValueType','logical');
+    
+    while ~isempty(startQueue) || ~isempty(exploreQueue)
+        if isempty(startQueue)
+            currentCell = exploreQueue(1,:);
+            exploreQueue(1,:) = [];
+        else
+            currentCell = startQueue(1,:);
+            startQueue(1,:) = [];
+        end
+        Explored(mat2str(currentCell)) = true;
+        
+        for i = [-1,1]  %exploring the four adjacent cells to this one
+            adjCell1 = [currentCell(1)+i,currentCell(2)];
+            adjCell2 = [currentCell(1),currentCell(2)+i];
+            
+            if (adjCell(1)>1 && adjCell1(1)<size(Lot,1) && adjCell(2)>1 && adjCell1(2)<size(Lot,2)) && (Lot(adjCell1(1),adjCell1(2))==0) && (iskey(Explored,mat2str(adjCell1))) %if it's not in the clearance zone, it's a free space, and it hasn't already been explored.
+                newLot = Lot;
+                newLot(currentCell(1),currentCell(2))=car;
+                newLot(adjCell1(1),adjCell1(2))=car;
+                adjStates = cat(3,adjStates,newLot);
+                exploreQueue = [exploreQueue;adjCell1];
+            end
+            if (adjCel2(1)>1 && adjCell2(1)<size(Lot,1) && adjCel2(2)>1 && adjCell2(2)<size(Lot,2)) && (Lot(adjCell2(1),adjCell2(2))==0) && (isKey(Explored,mat2str(adjCell2)))
+                newLot = Lot;
+                newLot(currentCell(1),currentCell(2))=car;
+                newLot(adjCell2(1),adjCell2(2))=car;
+                adjStates = cat(3,adjStates,newLot);
+                exploreQueue = [exploreQueue;adjCell2];
+            end
+        end
+    end
+end
+
+function dTime = departureTime(lot,OcarList)
+    pLot = ParjingLotTurn(lot,true);
+    
+    for car = OcarList
+       if ~ismember(car,lot)
+          continue 
+       end
+       tic
+       newLot = pLot.depart(car);
+       time = toc;
+       
+       if isnan(newLot) %if car cant depart
+           dTime = NaN;
+       else
+           dTime = dTime + time;
+           pLot = ParkingLotTurn(newLot,true);
+       end
+    end
+end
+
+function bool = haveVisited(lot)
+    global State2Node
+    key = mat2str(lot);
+    bool = isKey(State2Node,key);
+end

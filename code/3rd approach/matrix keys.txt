@@ -1,0 +1,340 @@
+classdef ParkingLot
+   properties
+      Lot
+      States
+      inverseStates
+      FocusCars
+      ActionSet
+      Graph
+      targetCar
+      cumulativeWeight
+      debug
+      solutions
+   end
+   
+   methods
+        function obj = ParkingLot(rows, cols, capacity, targetCar, debug)
+            if nargin <5
+               obj.debug = false; 
+            else
+               obj.debug = debug; 
+            end
+           obj.Lot = generateParkingLot(rows, cols, capacity);
+           obj.targetCar = targetCar;
+           obj.Graph = digraph();
+           obj.States = containers.Map('KeyType','double','ValueType','any');
+           obj.inverseStates = containers.Map('KeyType','double','ValueType','double');
+           obj.FocusCars = containers.Map('KeyType','char','ValueType','double');
+           obj.ActionSet = ["u" "d" "l" "r"];
+           
+           %initiate initial node
+           obj.Graph = addnode(obj.Graph, 1);
+           obj.States(1) = obj.Lot;
+           temp = obj.Lot;
+           temp(obj.Lot==obj.targetCar) = obj.targetCar + "f";
+           obj.inverseStates({temp}) = 1;
+           obj.FocusCars(1) = targetCar;
+           obj.cumulativeWeight(1) = 0;
+           
+           obj.solutions = obj.generateGraph(1);
+        end
+       
+        function solutions = generateGraph(obj,s)
+            queue = s;
+            solutions = [];
+            bestWeight = inf;
+            while ~isempty(queue)
+                s = queue(1);
+                stateLot = obj.States(s);
+                focusCar = obj.FocusCars(s);
+                cumWeight = obj.cumulativeWeight(s);
+                if obj.debug
+                    obj.showLot(s)
+                end
+                for action = obj.ActionSet
+                    [newLot, newFocusCar] = obj.Transition(s, action);
+                    if isnan(newLot)
+                        continue
+                    end
+                    newNodeIndex = numnodes(obj.Graph)+1;
+                    
+                    temp = newLot;
+                    temp(temp==newFocusCar) = newFocusCar + "f";
+                    if iskey(temp,obj.inverseStates)
+                        continue
+                    end
+                    obj.inverseStates(temp) = newNodeIndex;
+                    
+                    reward = obj.Reward(stateLot,focusCar, newLot,newFocusCar);
+                    newCumWeight = cumWeight + reward;
+                    if newCumWeight>bestWeight
+                       continue 
+                    end
+                    obj.Graph = addedge(obj.Graph, s, newNodeIndex, reward);
+                    obj.States(newNodeIndex) = newLot;
+                    obj.FocusCars(newNodeIndex) = newFocusCar;
+                    obj.cumulativeWeight(newNodeIndex) = newCumWeight;
+                    
+                    if obj.isEndNode(newNodeIndex)
+                        if newCumWeight<bestWeight
+                            bestWeight = newCumWeight;
+                        end
+                        solutions = [solutions, obj.getInstructions(s)];
+                        continue
+                    end
+                    
+                    queue = [queue, newNodeIndex];
+                end
+                queue(queue == s) = [];
+            end
+            
+            %--------might or might not increase efficiency---------
+            if isempty(outedges(obj.Graph,s)) && ~obj.isEndNode(s)   %if it's a dead end and not an end node
+               obj.stripBranch(s)
+            end
+            %-------------------------------------------------------
+       end
+       
+       function [nextLot, nextFocusCar] = Transition(obj, state, action)
+            stateLot = obj.States(state);
+            focusCar = obj.FocusCars(state);
+            nextLot = stateLot;
+            nextFocusCar = focusCar;
+            
+            [rows, cols] = find(stateLot==focusCar);
+            if obj.isVert(focusCar, stateLot)
+                if action == "u"
+                    carInDir = obj.carInDir(focusCar, action, stateLot);
+                    if carInDir == 0
+                        nextLot(rows(1)-1,cols(1))=focusCar;
+                        nextLot(rows(end),cols(1))=0;
+                        nextFocusCar = obj.targetCar;
+                    elseif ~isnan(carInDir)
+                       nextFocusCar = carInDir;
+                    elseif isnan(carInDir) && focusCar == obj.targetCar
+                        nextLot(nextLot==focusCar) = 0;
+                    end
+                elseif action == "d"
+                    carInDir = obj.carInDir(focusCar, action, stateLot);
+                    if carInDir == 0
+                        nextLot(rows(end)+1,cols(1))=focusCar;
+                        nextLot(rows(1),cols(1))=0;
+                        nextFocusCar = obj.targetCar;
+                    elseif ~isnan(carInDir)
+                       nextFocusCar = carInDir;
+                    elseif isnan(carInDir) && focusCar == obj.targetCar
+                        nextLot(nextLot==focusCar) = 0;
+                    end
+                end
+            else
+                if action == "l"
+                    carInDir = obj.carInDir(focusCar, action, stateLot);
+                    if carInDir == 0
+                        nextLot(rows(1),cols(1)-1)=focusCar;
+                        nextLot(rows(1),cols(end))=0;
+                        nextFocusCar = obj.targetCar;
+                    elseif ~isnan(carInDir)
+                       nextFocusCar = carInDir;
+                    elseif isnan(carInDir) && focusCar == obj.targetCar
+                        nextLot(nextLot==focusCar) = 0;
+                    end
+                elseif action == "r"
+                    carInDir = obj.carInDir(focusCar, action, stateLot);
+                    if carInDir == 0
+                        nextLot(rows(1),cols(end)+1)=focusCar;
+                        nextLot(rows(1),cols(1))=0;
+                        nextFocusCar = obj.targetCar;
+                    elseif ~isnan(carInDir)
+                       nextFocusCar = carInDir;
+                    elseif isnan(carInDir) && focusCar == obj.targetCar
+                        nextLot(nextLot==focusCar) = 0;
+                    end
+                end
+            end
+            if all(all(nextLot == stateLot)) && focusCar == nextFocusCar
+               nextLot = NaN;
+               nextFocusCar = NaN;
+            end
+       end
+       
+       function reward = Reward(obj, lot, focusCar, nextLot, nextFocusCar)
+           reward = 0;
+           if focusCar ~= nextFocusCar
+              reward = reward + 0.2; 
+           end
+           if any(any(lot~=nextLot))
+                if obj.clearanceCars(lot) ~= obj.clearanceCars(nextLot)
+                    reward = reward + 1;
+                else
+                    reward = reward + 0.5;
+                end
+           end
+       end
+       
+       function bool = isEndNode(obj, s)
+           bool = false;
+           if ~any(any(obj.States(s)==obj.targetCar))
+               bool = true;
+           end
+       end
+       
+       %--------might or might not increase efficiency---------
+        function stripBranch(obj, s)
+            return
+            if numnodes(obj.Graph)>1
+                if isempty(outedges(obj.Graph,s)) && ~obj.isEndNode(s)
+                    preIDs = predecessors(obj.Graph,s);
+                    obj.Graph = rmnode(obj.Graph,s);
+                    for preID = preIDs
+                        obj.stripBranch(preID)
+                    end
+                else
+                    return
+                end
+            end
+        end
+       
+        function instructions = getInstructions(obj, endNode)                    %converts path to direction. e.g if node 1 and 3 are connected and
+           instructions = "";                                               %the difference between their states is car 5 moving north-west, an instruction is passed "5,nw"
+           run = true;
+           while run
+               startNodes = predecessors(obj.Graph, endNode);
+               startNode = startNodes(1);
+               if startNode == 1    %if it is the very first node
+                  run = false;
+               end
+               
+               endLot = obj.States(endNode);
+               startLot = obj.States(startNode);
+               if all(all(startLot==endLot))              %we only care about when a car moves, not when we shift focus to moving another car
+                   endNode = startNode;
+                   continue
+               end
+               difference = startLot~=endLot;
+               
+               [rows, cols] = find(difference==1);
+               if all(rows == rows(1))                                     %if both states' cars are horizontal
+                   if endLot(rows(1), max(cols))==obj.FocusCars(startNode) || endLot(rows(1), min(cols))==0     %if car moved forward. there is a difference at (row(1), max(cols)), so if at the end state, the car is present at that index, then it must have travelled forward to there. same backwards(if a space is present at the index(row(1), min(cols))).
+                       instructions = startNode + ":" + obj.FocusCars(startNode) + ",r" + " " +instructions;
+                   elseif endLot(rows(1), max(cols))==0 || endLot(rows(1), min(cols))==obj.FocusCars(startNode)
+                       instructions = startNode + ":" + obj.FocusCars(startNode) + ",l" + " " + instructions;
+                   end
+               elseif all(cols == cols(1))                                 %if both states' cars are vertical
+                   if endLot(max(rows), cols(1))==obj.FocusCars(startNode) || endLot(min(rows), cols(1))==0     %same logic as above
+                       instructions = startNode + ":" + obj.FocusCars(startNode) + ",d" + " " + instructions;
+                   elseif endLot(max(rows), cols(1))==0 || endLot(min(rows), cols(1))==obj.FocusCars(startNode)
+                       instructions = startNode + ":" + obj.FocusCars(startNode) + ",u" + " " + instructions;
+                   end
+               end
+               endNode = startNode;
+            end
+        end
+        
+        
+       %-------------------------------------------------------
+       
+       function clearance = clearanceCars(obj, lot)
+           clearance = [lot(1,:), lot(end,:), lot(2:end-1,1)', lot(2:end-1,end)'];
+       end
+       
+       function carIndex = carInDir(obj, car, dir, lot)
+           [rows, cols] = find(lot==car);
+            try
+                if obj.isVert(car,lot)
+                    if dir=="u"
+                        carIndex=lot(rows(1)-1, cols(1));  
+                    elseif dir=="d"                                 
+                        carIndex=lot(rows(end)+1, cols(1));
+                    end
+                else
+                    if dir=="r"
+                        carIndex=lot(rows(1), cols(end)+1);
+                    elseif dir=="l"
+                        carIndex=lot(rows(1), cols(1)-1);
+                    end
+                end
+            catch ME
+                if (strcmp(ME.identifier,'MATLAB:badsubscript'))
+                    carIndex=NaN;
+                else
+                    rethrow(ME)
+                end
+            end
+       end
+       
+       function bool = isVert(obj, car, lot)
+           [~, cols] = find(lot==car);
+            if all(cols==cols(1))
+                bool = true;
+            else
+                bool = false;
+            end
+       end
+       
+       function showLot(obj, s)
+           if size(s)>1
+                parkingLot = s(1);
+                focusCar = s(2);
+           else
+               parkingLot = obj.States(s);
+                focusCar = obj.FocusCars(s);
+                lotSize = size(parkingLot);
+           end
+
+            maxVal=max(max(parkingLot));      %same as number of cars in the parking lot
+            image=zeros(lotSize(1), lotSize(2), 3);
+            for i = 1:3     %convert to black and white, each car a different shade of gray. no car is completely white, none is completely black.
+                image(:,:,i)=((parkingLot/maxVal)*150)+55;    
+            end
+            spaces=(parkingLot==0)*255;
+            image=image+spaces;
+
+
+            [carRows, carCols] = find(parkingLot==obj.targetCar);
+            if ~isempty(carRows)        %if the target car is still in the parkingLot
+                for i = 1:1:size(carRows, 1)
+                    image(carRows(i), carCols(i), :)=0;
+                    image(carRows(i), carCols(i), 2)=255;
+                end
+            end
+
+            if focusCar~=obj.targetCar
+                [carRows, carCols] = find(parkingLot==focusCar);
+                for i = 1:size(carRows, 1)
+                    image(carRows(i), carCols(i), :)=0;
+                    image(carRows(i), carCols(i), 1)=150;
+                end
+            end
+
+            figure(1)
+            image=uint8(image);
+            image=imresize(image, 50, "nearest");
+            imshow(image)
+            return
+       end
+        
+       function performMoves(obj, moveset)
+           if nargin <2
+              moveset = obj.solutions; 
+           end
+            for moves = moveset
+                obj.showLot([obj.Lot, obj.targetCar])
+                pause(1)
+                steps = split(moves, " ")';
+                steps(end) = [];
+                for s = steps
+                   temp = split(s, ":");
+                   node = str2double(temp(1));
+                   lot = obj.States(node);
+                   car = obj.FocusCars(node);
+                   obj.showLot([lot, car])
+                   pause(0.5)
+                end
+                pause(0.5)
+                obj.showLot([zeros(size(obj.Lot)), NaN])
+                pause(0.5)
+            end
+        end
+   end
+   
+end
